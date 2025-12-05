@@ -7,6 +7,7 @@ use std::path::PathBuf;
 const MAX_BOOKMARKS: usize = 36;
 const BOOKMARK_FILE: &str = ".local/changeDirectory";
 const HISTORY_FILE: &str = ".local/changeDirectoryHistory";
+const TARGET_FILE: &str = ".local/share/changedir.target";
 
 fn debug_print(verbose: bool, message: &str) {
     if verbose {
@@ -24,6 +25,35 @@ fn get_history_path() -> PathBuf {
     dirs::home_dir()
         .expect("Could not find home directory")
         .join(HISTORY_FILE)
+}
+
+fn get_target_path() -> PathBuf {
+    dirs::home_dir()
+        .expect("Could not find home directory")
+        .join(TARGET_FILE)
+}
+
+fn delete_target_file(verbose: bool) -> io::Result<()> {
+    let path = get_target_path();
+    if path.exists() {
+        debug_print(verbose, &format!("Deleting existing target file: {}", path.display()));
+        fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
+fn write_target_file(path: &PathBuf, verbose: bool) -> io::Result<()> {
+    let target_path = get_target_path();
+    debug_print(verbose, &format!("Writing target directory to: {}", target_path.display()));
+    
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    
+    fs::write(&target_path, path.to_string_lossy().as_bytes())?;
+    debug_print(verbose, "Target file written successfully");
+    Ok(())
 }
 
 fn load_bookmarks(verbose: bool) -> Vec<PathBuf> {
@@ -325,10 +355,11 @@ fn choose_directory_interactive(verbose: bool) -> io::Result<()> {
             }
         }
     }
+    io::stdout().flush()?;
 
-    // Prompt on stderr so it's visible when stdout is captured
-    eprint!("{}", "Select directory (0-9, a-z): ".bright_yellow());
-    io::stderr().flush()?;
+    // Prompt on stdout (same stream as list for consistency)
+    print!("{}", "Select directory (0-9, a-z): ".bright_yellow());
+    io::stdout().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -343,7 +374,7 @@ fn choose_directory_interactive(verbose: bool) -> io::Result<()> {
                 let selected = &bookmarks[index];
                 debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                 add_to_history(selected.clone(), verbose)?;
-                println!("{}", selected.display());
+                write_target_file(selected, verbose)?;
                 return Ok(());
             } 
             // Check if index is in filtered history (accounting for bookmark offset)
@@ -353,7 +384,7 @@ fn choose_directory_interactive(verbose: bool) -> io::Result<()> {
                     let selected = &filtered_history[history_index];
                     debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                     add_to_history(selected.clone(), verbose)?;
-                    println!("{}", selected.display());
+                    write_target_file(selected, verbose)?;
                     return Ok(());
                 }
             } else {
@@ -396,7 +427,7 @@ fn choose_directory_by_letter(letter: &str, verbose: bool) -> io::Result<()> {
                 let selected = &bookmarks[index];
                 debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                 add_to_history(selected.clone(), verbose)?;
-                println!("{}", selected.display());
+                write_target_file(selected, verbose)?;
                 return Ok(());
             } 
             // Check if index is in filtered history (accounting for bookmark offset)
@@ -406,7 +437,7 @@ fn choose_directory_by_letter(letter: &str, verbose: bool) -> io::Result<()> {
                     let selected = &filtered_history[history_index];
                     debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                     add_to_history(selected.clone(), verbose)?;
-                    println!("{}", selected.display());
+                    write_target_file(selected, verbose)?;
                     return Ok(());
                 }
             } else {
@@ -440,7 +471,7 @@ fn change_to_previous(verbose: bool) -> io::Result<()> {
         std::process::exit(1);
     }
 
-    println!("{}", previous.display());
+    write_target_file(previous, verbose)?;
     Ok(())
 }
 
@@ -452,7 +483,7 @@ fn change_up_one_level(verbose: bool) -> io::Result<()> {
         let parent_path = parent.to_path_buf();
         debug_print(verbose, &format!("Parent directory: {}", parent_path.display()));
         add_to_history(parent_path.clone(), verbose)?;
-        println!("{}", parent_path.display());
+        write_target_file(&parent_path, verbose)?;
         Ok(())
     } else {
         debug_print(verbose, "Already at root directory");
@@ -495,14 +526,14 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
         let dir_name = subdir.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("?");
-        eprintln!("{} {}", 
+        println!("{} {}", 
             format!("[{}]", prefix).bright_cyan().bold(),
             dir_name.bright_white()
         );
     }
 
-    eprint!("{}", "Select directory (0-9, a-z): ".bright_yellow());
-    io::stderr().flush()?;
+    print!("{}", "Select directory (0-9, a-z): ".bright_yellow());
+    io::stdout().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -516,7 +547,7 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
                 let selected = &subdirs[index];
                 debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                 add_to_history(selected.clone(), verbose)?;
-                println!("{}", selected.display());
+                write_target_file(selected, verbose)?;
                 return Ok(());
             } else {
                 debug_print(verbose, &format!("Index {} out of range (max: {})", index, subdirs.len().min(36)));
@@ -544,7 +575,7 @@ fn find_directory_by_name(name: &str, verbose: bool) -> io::Result<()> {
                 debug_print(verbose, &format!("Found in bookmarks: {}", bookmark.display()));
                 if bookmark.exists() {
                     add_to_history(bookmark.clone(), verbose)?;
-                    println!("{}", bookmark.display());
+                    write_target_file(&bookmark, verbose)?;
                     return Ok(());
                 } else {
                     debug_print(verbose, "Bookmark exists but directory does not");
@@ -564,7 +595,7 @@ fn find_directory_by_name(name: &str, verbose: bool) -> io::Result<()> {
                         if dir_name.to_string_lossy() == name {
                             debug_print(verbose, &format!("Found in subdirectories: {}", path.display()));
                             add_to_history(path.clone(), verbose)?;
-                            println!("{}", path.display());
+                            write_target_file(&path, verbose)?;
                             return Ok(());
                         }
                     }
@@ -584,7 +615,7 @@ fn find_directory_by_name(name: &str, verbose: bool) -> io::Result<()> {
             if candidate.exists() && candidate.is_dir() {
                 debug_print(verbose, &format!("Found in parent directories: {}", candidate.display()));
                 add_to_history(candidate.clone(), verbose)?;
-                println!("{}", candidate.display());
+                write_target_file(&candidate, verbose)?;
                 return Ok(());
             }
         } else {
@@ -614,6 +645,13 @@ fn print_current_directory(verbose: bool) {
 }
 
 fn main() {
+    // Delete target file on startup if it exists
+    // Check for verbose flag early to pass to delete_target_file
+    let early_verbose = std::env::args().any(|arg| arg == "-v" || arg == "--verbose");
+    if let Err(e) = delete_target_file(early_verbose) {
+        eprintln!("Warning: Could not delete target file: {}", e);
+    }
+    
     // Build the command definition
     let cmd = Command::new("changeDir")
         .about("Intelligent directory bookmarking and navigation")
