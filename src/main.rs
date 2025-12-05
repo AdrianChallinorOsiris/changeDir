@@ -144,21 +144,58 @@ fn add_to_history(path: PathBuf, verbose: bool) -> io::Result<()> {
 }
 
 fn list_bookmarks(verbose: bool) -> io::Result<()> {
-    debug_print(verbose, "Listing bookmarks");
+    debug_print(verbose, "Listing bookmarks and history");
     let bookmarks = load_bookmarks(verbose);
-    if bookmarks.is_empty() {
+    let history = load_history(verbose);
+    
+    // Filter out history entries that are already in bookmarks
+    let filtered_history: Vec<PathBuf> = history
+        .iter()
+        .filter(|hist_dir| !bookmarks.contains(hist_dir))
+        .cloned()
+        .collect();
+    
+    let total_items = bookmarks.len() + filtered_history.len();
+    
+    if total_items == 0 {
         println!("{}", "No bookmarked directories.".yellow());
         return Ok(());
     }
 
-    debug_print(verbose, &format!("Displaying {} bookmarks", bookmarks.len()));
-    for (i, bookmark) in bookmarks.iter().enumerate() {
-        let prefix = get_prefix_char(i);
-        println!("{} {}", 
-            format!("[{}]", prefix).bright_cyan().bold(),
-            bookmark.display().to_string().bright_white()
-        );
+    // List bookmarks
+    if !bookmarks.is_empty() {
+        debug_print(verbose, &format!("Displaying {} bookmarks", bookmarks.len()));
+        for (i, bookmark) in bookmarks.iter().enumerate() {
+            let prefix = get_prefix_char(i);
+            println!("{} {}", 
+                format!("[{}]", prefix).bright_cyan().bold(),
+                bookmark.display().to_string().bright_white()
+            );
+        }
     }
+
+    // List history directories with continuous numbering (excluding duplicates)
+    if !filtered_history.is_empty() {
+        // Add blank line between bookmarks and history if both exist
+        if !bookmarks.is_empty() {
+            println!();
+        }
+        
+        debug_print(verbose, &format!("Displaying {} history entries (after filtering duplicates)", filtered_history.len()));
+        let start_index = bookmarks.len();
+        for (i, hist_dir) in filtered_history.iter().enumerate() {
+            let index = start_index + i;
+            // Only show if within the 36-item limit (0-9, a-z)
+            if index < 36 {
+                let prefix = get_prefix_char(index);
+                println!("{} {}", 
+                    format!("[{}]", prefix).bright_cyan().bold(),
+                    hist_dir.display().to_string().bright_white()
+                );
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -239,23 +276,59 @@ fn forget_all(verbose: bool) -> io::Result<()> {
 fn choose_directory_interactive(verbose: bool) -> io::Result<()> {
     debug_print(verbose, "Interactive directory selection");
     let bookmarks = load_bookmarks(verbose);
+    let history = load_history(verbose);
     
-    if bookmarks.is_empty() {
+    // Filter out history entries that are already in bookmarks
+    let filtered_history: Vec<PathBuf> = history
+        .iter()
+        .filter(|hist_dir| !bookmarks.contains(hist_dir))
+        .cloned()
+        .collect();
+    
+    let total_items = bookmarks.len() + filtered_history.len();
+    
+    if total_items == 0 {
         eprintln!("{}", "No bookmarked directories.".yellow());
         std::process::exit(1);
     }
 
-    debug_print(verbose, &format!("Displaying {} bookmarks for selection", bookmarks.len()));
-    for (i, bookmark) in bookmarks.iter().enumerate() {
-        let prefix = get_prefix_char(i);
-        println!("{} {}", 
-            format!("[{}]", prefix).bright_cyan().bold(),
-            bookmark.display().to_string().bright_white()
-        );
+    // Display bookmarks (to stdout for proper color display)
+    if !bookmarks.is_empty() {
+        debug_print(verbose, &format!("Displaying {} bookmarks for selection", bookmarks.len()));
+        for (i, bookmark) in bookmarks.iter().enumerate() {
+            let prefix = get_prefix_char(i);
+            println!("{} {}", 
+                format!("[{}]", prefix).bright_cyan().bold(),
+                bookmark.display().to_string().bright_white()
+            );
+        }
     }
 
-    print!("{}", "Select directory (0-9, a-z): ".bright_yellow());
-    io::stdout().flush()?;
+    // Display history directories with continuous numbering (to stdout for proper color display, excluding duplicates)
+    if !filtered_history.is_empty() {
+        // Add blank line between bookmarks and history if both exist
+        if !bookmarks.is_empty() {
+            println!();
+        }
+        
+        debug_print(verbose, &format!("Displaying {} history entries for selection (after filtering duplicates)", filtered_history.len()));
+        let start_index = bookmarks.len();
+        for (i, hist_dir) in filtered_history.iter().enumerate() {
+            let index = start_index + i;
+            // Only show if within the 36-item limit (0-9, a-z)
+            if index < 36 {
+                let prefix = get_prefix_char(index);
+                println!("{} {}", 
+                    format!("[{}]", prefix).bright_cyan().bold(),
+                    hist_dir.display().to_string().bright_white()
+                );
+            }
+        }
+    }
+
+    // Prompt on stderr so it's visible when stdout is captured
+    eprint!("{}", "Select directory (0-9, a-z): ".bright_yellow());
+    io::stderr().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -265,14 +338,26 @@ fn choose_directory_interactive(verbose: bool) -> io::Result<()> {
     if let Some(ch) = ch {
         if let Some(index) = get_index_from_char(ch) {
             debug_print(verbose, &format!("Parsed index: {}", index));
+            // Check if index is in bookmarks
             if index < bookmarks.len() {
                 let selected = &bookmarks[index];
                 debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                 add_to_history(selected.clone(), verbose)?;
                 println!("{}", selected.display());
                 return Ok(());
+            } 
+            // Check if index is in filtered history (accounting for bookmark offset)
+            else if index < total_items && index < 36 {
+                let history_index = index - bookmarks.len();
+                if history_index < filtered_history.len() {
+                    let selected = &filtered_history[history_index];
+                    debug_print(verbose, &format!("Selected directory: {}", selected.display()));
+                    add_to_history(selected.clone(), verbose)?;
+                    println!("{}", selected.display());
+                    return Ok(());
+                }
             } else {
-                debug_print(verbose, &format!("Index {} out of range (max: {})", index, bookmarks.len()));
+                debug_print(verbose, &format!("Index {} out of range (max: {})", index, total_items.min(36)));
             }
         } else {
             debug_print(verbose, &format!("Invalid character: '{}'", ch));
@@ -286,8 +371,18 @@ fn choose_directory_interactive(verbose: bool) -> io::Result<()> {
 fn choose_directory_by_letter(letter: &str, verbose: bool) -> io::Result<()> {
     debug_print(verbose, &format!("Choosing directory by letter: '{}'", letter));
     let bookmarks = load_bookmarks(verbose);
+    let history = load_history(verbose);
     
-    if bookmarks.is_empty() {
+    // Filter out history entries that are already in bookmarks
+    let filtered_history: Vec<PathBuf> = history
+        .iter()
+        .filter(|hist_dir| !bookmarks.contains(hist_dir))
+        .cloned()
+        .collect();
+    
+    let total_items = bookmarks.len() + filtered_history.len();
+    
+    if total_items == 0 {
         eprintln!("{}", "No bookmarked directories.".yellow());
         std::process::exit(1);
     }
@@ -296,21 +391,33 @@ fn choose_directory_by_letter(letter: &str, verbose: bool) -> io::Result<()> {
     if let Some(ch) = ch {
         if let Some(index) = get_index_from_char(ch) {
             debug_print(verbose, &format!("Parsed index: {}", index));
+            // Check if index is in bookmarks
             if index < bookmarks.len() {
                 let selected = &bookmarks[index];
                 debug_print(verbose, &format!("Selected directory: {}", selected.display()));
                 add_to_history(selected.clone(), verbose)?;
                 println!("{}", selected.display());
                 return Ok(());
+            } 
+            // Check if index is in filtered history (accounting for bookmark offset)
+            else if index < total_items && index < 36 {
+                let history_index = index - bookmarks.len();
+                if history_index < filtered_history.len() {
+                    let selected = &filtered_history[history_index];
+                    debug_print(verbose, &format!("Selected directory: {}", selected.display()));
+                    add_to_history(selected.clone(), verbose)?;
+                    println!("{}", selected.display());
+                    return Ok(());
+                }
             } else {
-                debug_print(verbose, &format!("Index {} out of range (max: {})", index, bookmarks.len()));
+                debug_print(verbose, &format!("Index {} out of range (max: {})", index, total_items.min(36)));
             }
         } else {
             debug_print(verbose, &format!("Invalid character: '{}'", ch));
         }
     }
     
-    eprintln!("{}", format!("Invalid bookmark letter: {}", letter).red());
+    eprintln!("{}", format!("Invalid directory letter: {}", letter).red());
     std::process::exit(1);
 }
 
@@ -388,14 +495,14 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
         let dir_name = subdir.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("?");
-        println!("{} {}", 
+        eprintln!("{} {}", 
             format!("[{}]", prefix).bright_cyan().bold(),
             dir_name.bright_white()
         );
     }
 
-    print!("{}", "Select directory (0-9, a-z): ".bright_yellow());
-    io::stdout().flush()?;
+    eprint!("{}", "Select directory (0-9, a-z): ".bright_yellow());
+    io::stderr().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
