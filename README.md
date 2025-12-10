@@ -85,6 +85,21 @@ source ~/.bashrc  # or ~/.zshrc
 
 ## Usage
 
+## Alias 
+The author uses this with a number of single or dual character aliases. Of course you can use any character you like, or have no aliases at all. The use of "z" was 
+because it is convenient, at the lefthand side of the bottom row of the keyboard. 
+
+```
+    alias z='cdir -c '
+    alias zl='cdir -l'
+    alias zb='cdir --bookmark'
+    alias zf='cdir -f'
+    alias zF='cdir -F'
+    alias zh='cdir -h'
+    alias zH='cdir --help '
+    alias back='cdir -back'
+```
+
 ### List bookmarked directories
 ```bash
 cdir -l
