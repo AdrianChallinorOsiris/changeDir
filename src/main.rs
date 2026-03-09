@@ -654,7 +654,14 @@ fn main() {
     
     // Build the command definition
     let cmd = Command::new("changeDir")
+        .version(env!("CARGO_PKG_VERSION"))
+        .author(env!("CARGO_PKG_AUTHORS"))
         .about("Intelligent directory bookmarking and navigation")
+        .long_about(format!(
+            "Intelligent directory bookmarking and navigation\n\nAuthor: {}\nVersion: {}",
+            env!("CARGO_PKG_AUTHORS"),
+            env!("CARGO_PKG_VERSION")
+        ))
         .arg(Arg::new("list")
             .short('l')
             .long("list")
@@ -699,6 +706,11 @@ fn main() {
             .long("verbose")
             .action(clap::ArgAction::SetTrue)
             .help("Enable verbose/debug output"))
+        .arg(Arg::new("change-dir")
+            .short('D')
+            .value_name("DIR")
+            .num_args(1)
+            .help("Change to directory by name"))
         .arg(Arg::new("directory")
             .help("Directory name to change to")
             .index(1));
@@ -738,6 +750,8 @@ fn main() {
         change_up_one_level(verbose)
     } else if matches.get_flag("down") {
         list_subdirectories(verbose)
+    } else if let Some(dir_name) = matches.get_one::<String>("change-dir") {
+        find_directory_by_name(dir_name, verbose)
     } else if let Some(dir_name) = matches.get_one::<String>("directory") {
         find_directory_by_name(dir_name, verbose)
     } else {
