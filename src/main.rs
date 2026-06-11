@@ -835,7 +835,7 @@ fn main() {
             .num_args(1)
             .help("Change to directory by name"))
         .arg(Arg::new("directory")
-            .help("Directory name to change to")
+            .help("Single letter: stored directory to change to; word: directory name to change to")
             .index(1));
 
     // Check for -? help flag
@@ -888,7 +888,19 @@ fn main() {
     } else if let Some(dir_name) = matches.get_one::<String>("change-dir") {
         find_directory_by_name(dir_name, verbose)
     } else if let Some(dir_name) = matches.get_one::<String>("directory") {
-        find_directory_by_name(dir_name, verbose)
+        // A single letter refers to a stored directory (as with -c);
+        // a longer word is treated as a directory name (as with -D).
+        let mut chars = dir_name.chars();
+        match (chars.next(), chars.next()) {
+            (Some(ch), None) if get_index_from_char(ch).is_some() => {
+                debug_print(verbose, &format!("Single letter '{}', selecting stored directory", ch));
+                choose_directory_by_letter(dir_name, verbose)
+            }
+            _ => {
+                debug_print(verbose, &format!("Word '{}', searching for directory by name", dir_name));
+                find_directory_by_name(dir_name, verbose)
+            }
+        }
     } else {
         print_current_directory(verbose);
         Ok(())
