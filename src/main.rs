@@ -561,6 +561,123 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
     std::process::exit(1);
 }
 
+const DEFAULT_TREE_DEPTH: usize = 3;
+const SKIPPED_BUILD_DIRS: &[&str] = &["target", "debug"];
+
+struct TreeItem {
+    path: PathBuf,
+    label: String,
+}
+
+impl std::fmt::Display for TreeItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+fn is_skipped_dir(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED_BUILD_DIRS.contains(&name)
+}
+
+fn collect_tree_items(
+    dir: &PathBuf,
+    prefix: &str,
+    depth: usize,
+    max_depth: usize,
+    items: &mut Vec<TreeItem>,
+    verbose: bool,
+) {
+    if depth >= max_depth {
+        return;
+    }
+
+    let mut subdirs: Vec<PathBuf> = match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                if !path.is_dir() {
+                    return None;
+                }
+                let name = path.file_name()?.to_string_lossy().to_string();
+                if is_skipped_dir(&name) {
+                    debug_print(verbose, &format!("Skipping directory: {}", path.display()));
+                    None
+                } else {
+                    Some(path)
+                }
+            })
+            .collect(),
+        Err(e) => {
+            debug_print(verbose, &format!("Cannot read {}: {}", dir.display(), e));
+            return;
+        }
+    };
+
+    subdirs.sort();
+
+    let count = subdirs.len();
+    for (i, subdir) in subdirs.into_iter().enumerate() {
+        let is_last = i == count - 1;
+        let branch = if is_last { "└── " } else { "├── " };
+        let dir_name = subdir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "?".to_string());
+
+        items.push(TreeItem {
+            path: subdir.clone(),
+            label: format!("{}{}{}", prefix, branch, dir_name),
+        });
+
+        let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+        collect_tree_items(&subdir, &child_prefix, depth + 1, max_depth, items, verbose);
+    }
+}
+
+fn tree_select_directory(max_depth: usize, verbose: bool) -> io::Result<()> {
+    let current = std::env::current_dir()?;
+    debug_print(verbose, &format!(
+        "Building directory tree for: {} (max depth: {})",
+        current.display(),
+        max_depth
+    ));
+
+    let mut items = Vec::new();
+    collect_tree_items(&current, "", 0, max_depth, &mut items, verbose);
+
+    if items.is_empty() {
+        eprintln!("{}", "No subdirectories found.".yellow());
+        std::process::exit(1);
+    }
+
+    debug_print(verbose, &format!("Found {} directories in tree", items.len()));
+
+    let prompt = format!("{}", current.display());
+    let selection = inquire::Select::new(&prompt, items)
+        .with_page_size(20)
+        .with_help_message("↑↓ to move, enter to select, type to filter, esc to cancel")
+        .prompt();
+
+    match selection {
+        Ok(item) => {
+            debug_print(verbose, &format!("Selected directory: {}", item.path.display()));
+            add_to_history(item.path.clone(), verbose)?;
+            write_target_file(&item.path, verbose)?;
+            Ok(())
+        }
+        Err(inquire::InquireError::OperationCanceled)
+        | Err(inquire::InquireError::OperationInterrupted) => {
+            debug_print(verbose, "Selection cancelled");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Selection error: {}", e).red());
+            std::process::exit(1);
+        }
+    }
+}
+
 fn find_directory_by_name(name: &str, verbose: bool) -> io::Result<()> {
     let current = std::env::current_dir()?;
     debug_print(verbose, &format!("Searching for directory: '{}'", name));
@@ -701,6 +818,12 @@ fn main() {
             .long("down")
             .action(clap::ArgAction::SetTrue)
             .help("List and select a subdirectory"))
+        .arg(Arg::new("tree")
+            .short('t')
+            .long("tree")
+            .num_args(0..=1)
+            .value_name("DEPTH")
+            .help("Show a directory tree and select one interactively (optional max depth, default 3)"))
         .arg(Arg::new("verbose")
             .short('v')
             .long("verbose")
@@ -750,6 +873,18 @@ fn main() {
         change_up_one_level(verbose)
     } else if matches.get_flag("down") {
         list_subdirectories(verbose)
+    } else if matches.contains_id("tree") {
+        let max_depth = match matches.get_one::<String>("tree") {
+            Some(value) => match value.parse::<usize>() {
+                Ok(d) if d > 0 => d,
+                _ => {
+                    eprintln!("{}", format!("Invalid tree depth: {}", value).red());
+                    std::process::exit(1);
+                }
+            },
+            None => DEFAULT_TREE_DEPTH,
+        };
+        tree_select_directory(max_depth, verbose)
     } else if let Some(dir_name) = matches.get_one::<String>("change-dir") {
         find_directory_by_name(dir_name, verbose)
     } else if let Some(dir_name) = matches.get_one::<String>("directory") {
