@@ -492,6 +492,13 @@ fn change_up_one_level(verbose: bool) -> io::Result<()> {
     }
 }
 
+fn cd_to(path: &PathBuf, verbose: bool) -> io::Result<()> {
+    debug_print(verbose, &format!("Selected directory: {}", path.display()));
+    add_to_history(path.clone(), verbose)?;
+    write_target_file(path, verbose)?;
+    Ok(())
+}
+
 fn list_subdirectories(verbose: bool) -> io::Result<()> {
     let current = std::env::current_dir()?;
     debug_print(verbose, &format!("Listing subdirectories of: {}", current.display()));
@@ -517,6 +524,10 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
 
     subdirs.sort();
     debug_print(verbose, "Sorted subdirectories");
+
+    if subdirs.len() == 1 {
+        return cd_to(&subdirs[0], verbose);
+    }
 
     for (i, subdir) in subdirs.iter().enumerate() {
         if i >= 36 {
@@ -544,11 +555,7 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
         if let Some(index) = get_index_from_char(ch) {
             debug_print(verbose, &format!("Parsed index: {}", index));
             if index < subdirs.len() && index < 36 {
-                let selected = &subdirs[index];
-                debug_print(verbose, &format!("Selected directory: {}", selected.display()));
-                add_to_history(selected.clone(), verbose)?;
-                write_target_file(selected, verbose)?;
-                return Ok(());
+                return cd_to(&subdirs[index], verbose);
             } else {
                 debug_print(verbose, &format!("Index {} out of range (max: {})", index, subdirs.len().min(36)));
             }
@@ -610,6 +617,10 @@ fn search_subdirectories(query: &str, verbose: bool) -> io::Result<()> {
         std::process::exit(1);
     }
 
+    if subdirs.len() == 1 {
+        return cd_to(&subdirs[0], verbose);
+    }
+
     for (i, subdir) in subdirs.iter().enumerate() {
         if i >= 36 {
             break;
@@ -638,11 +649,7 @@ fn search_subdirectories(query: &str, verbose: bool) -> io::Result<()> {
         if let Some(index) = get_index_from_char(ch) {
             debug_print(verbose, &format!("Parsed index: {}", index));
             if index < subdirs.len() && index < 36 {
-                let selected = &subdirs[index];
-                debug_print(verbose, &format!("Selected directory: {}", selected.display()));
-                add_to_history(selected.clone(), verbose)?;
-                write_target_file(selected, verbose)?;
-                return Ok(());
+                return cd_to(&subdirs[index], verbose);
             } else {
                 debug_print(
                     verbose,
@@ -753,6 +760,10 @@ fn tree_select_directory(max_depth: usize, verbose: bool) -> io::Result<()> {
     }
 
     debug_print(verbose, &format!("Found {} directories in tree", items.len()));
+
+    if items.len() == 1 {
+        return cd_to(&items[0].path, verbose);
+    }
 
     let prompt = format!("{}", current.display());
     let selection = inquire::Select::new(&prompt, items)
