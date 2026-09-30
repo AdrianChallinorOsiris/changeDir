@@ -139,6 +139,14 @@ cdir -d
 ```
 Lists all subdirectories of the current directory with prefix letters [0-9, a-z] and prompts for selection.
 
+### Search subdirectories by partial name
+```bash
+cdir -s m75
+# or
+changedir --subdir m75
+```
+Lists immediate subdirectories whose names contain the given text, ignoring case, then prompts for a selection (`0-9`, `a-z`). Choosing a prefix changes to that directory.
+
 ### Change to directory by name
 ```bash
 cdir myproject

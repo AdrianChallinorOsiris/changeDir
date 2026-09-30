@@ -561,6 +561,107 @@ fn list_subdirectories(verbose: bool) -> io::Result<()> {
     std::process::exit(1);
 }
 
+fn matching_subdirectories(dir: &std::path::Path, query: &str) -> io::Result<Vec<PathBuf>> {
+    let needle = query.to_lowercase();
+    let mut subdirs: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let name = path.file_name()?.to_string_lossy();
+            if name.to_lowercase().contains(&needle) {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    subdirs.sort();
+    Ok(subdirs)
+}
+
+fn search_subdirectories(query: &str, verbose: bool) -> io::Result<()> {
+    let query = query.trim();
+    if query.is_empty() {
+        eprintln!("{}", "Search text is required.".red());
+        std::process::exit(1);
+    }
+
+    let current = std::env::current_dir()?;
+    debug_print(
+        verbose,
+        &format!(
+            "Searching subdirectories of {} for '{}'",
+            current.display(),
+            query
+        ),
+    );
+
+    let subdirs = matching_subdirectories(&current, query)?;
+    debug_print(verbose, &format!("Found {} matching subdirectories", subdirs.len()));
+
+    if subdirs.is_empty() {
+        eprintln!(
+            "{}",
+            format!("No subdirectories matching '{}'.", query).yellow()
+        );
+        std::process::exit(1);
+    }
+
+    for (i, subdir) in subdirs.iter().enumerate() {
+        if i >= 36 {
+            break;
+        }
+        let prefix = get_prefix_char(i);
+        let dir_name = subdir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?");
+        println!(
+            "{} {}",
+            format!("[{}]", prefix).bright_cyan().bold(),
+            dir_name.bright_white()
+        );
+    }
+
+    print!("{}", "Select directory (0-9, a-z): ".bright_yellow());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    debug_print(verbose, &format!("User input: '{}'", input.trim()));
+
+    let ch = input.trim().chars().next();
+    if let Some(ch) = ch {
+        if let Some(index) = get_index_from_char(ch) {
+            debug_print(verbose, &format!("Parsed index: {}", index));
+            if index < subdirs.len() && index < 36 {
+                let selected = &subdirs[index];
+                debug_print(verbose, &format!("Selected directory: {}", selected.display()));
+                add_to_history(selected.clone(), verbose)?;
+                write_target_file(selected, verbose)?;
+                return Ok(());
+            } else {
+                debug_print(
+                    verbose,
+                    &format!(
+                        "Index {} out of range (max: {})",
+                        index,
+                        subdirs.len().min(36)
+                    ),
+                );
+            }
+        } else {
+            debug_print(verbose, &format!("Invalid character: '{}'", ch));
+        }
+    }
+
+    eprintln!("{}", "Invalid selection.".red());
+    std::process::exit(1);
+}
+
 const DEFAULT_TREE_DEPTH: usize = 3;
 const SKIPPED_BUILD_DIRS: &[&str] = &["target", "debug"];
 
@@ -818,6 +919,12 @@ fn main() {
             .long("down")
             .action(clap::ArgAction::SetTrue)
             .help("List and select a subdirectory"))
+        .arg(Arg::new("subdir")
+            .short('s')
+            .long("subdir")
+            .num_args(1)
+            .value_name("NAME")
+            .help("Find subdirectories whose names contain NAME (case-insensitive) and select one"))
         .arg(Arg::new("tree")
             .short('t')
             .long("tree")
@@ -873,6 +980,8 @@ fn main() {
         change_up_one_level(verbose)
     } else if matches.get_flag("down") {
         list_subdirectories(verbose)
+    } else if let Some(query) = matches.get_one::<String>("subdir") {
+        search_subdirectories(query, verbose)
     } else if matches.contains_id("tree") {
         let max_depth = match matches.get_one::<String>("tree") {
             Some(value) => match value.parse::<usize>() {
@@ -909,6 +1018,34 @@ fn main() {
     if let Err(e) = result {
         eprintln!("{}", format!("Error: {}", e).red());
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matching_subdirectories;
+    use std::fs;
+
+    #[test]
+    fn matches_immediate_subdirectory_names_case_insensitively() {
+        let root = std::env::temp_dir().join(format!(
+            "changedir-subdir-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Canon-M75")).unwrap();
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::create_dir_all(root.join("nested").join("also-m75")).unwrap();
+        fs::write(root.join("notes-m75.txt"), b"not a directory").unwrap();
+
+        let matches = matching_subdirectories(&root, "m75").unwrap();
+        let names: Vec<String> = matches
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(names, vec!["Canon-M75".to_string()]);
+        let _ = fs::remove_dir_all(&root);
     }
 }
 
